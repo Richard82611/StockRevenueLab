@@ -78,7 +78,7 @@ st.markdown("#### 透過 16 萬筆真實數據，揭開業績與股價漲幅的�
 st.sidebar.header("🔬 研究條件篩選")
 
 # 1. 定義年度
-target_year = st.sidebar.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
+target_year = st.sidebar.selectbox("分析年度", [str(y) for y in range(2026, 2019, -1)], index=1)
 
 # 2. 定義指標
 metric_choice = st.sidebar.radio("成長指標", ["年增率 (YoY)", "月增率 (MoM)"], help="YoY看長期趨勢，MoM看短期爆發")
