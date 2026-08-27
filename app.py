@@ -220,7 +220,7 @@ def fetch_heatmap_data(year, metric_col, stat_method, price_field="year_close"):
         COUNT(m.{metric_col}) as data_points,
         AVG(b.annual_return) as avg_annual_return  -- 新增：計算該區間的平均股價漲幅
     FROM annual_bins b
-    JOIN monthly_stats m ON SPLIT_PART(b.symbol, '.', 1) = m.stock_id
+    JOIN monthly_stats m ON SPLIT_PART(b.symbol, '.', 1) = m.stock_id::text
     WHERE m.{metric_col} IS NOT NULL
     GROUP BY b.return_bin, b.bin_order, m.report_month
     ORDER BY b.bin_order, m.report_month;
@@ -324,7 +324,7 @@ def fetch_stat_summary(year, metric_col, price_field="year_close"):
                percentile_cont(0.25) WITHIN GROUP (ORDER BY m.{metric_col}))::numeric, 2) as iqr_val,
         ROUND(SUM(CASE WHEN m.{metric_col} > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as positive_rate
     FROM annual_bins b
-    JOIN monthly_stats m ON SPLIT_PART(b.symbol, '.', 1) = m.stock_id
+    JOIN monthly_stats m ON SPLIT_PART(b.symbol, '.', 1) = m.stock_id::text
     WHERE m.{metric_col} IS NOT NULL
     GROUP BY b.return_bin, b.bin_order
     ORDER BY b.bin_order;
@@ -739,7 +739,7 @@ if not df.empty:
         ROUND(STDDEV(m.mom_pct)::numeric, 1) as "月增MoM波動%",
         r.remark as "最新營收備註"
     FROM monthly_revenue m
-    JOIN target_stocks t ON m.stock_id = SPLIT_PART(t.symbol, '.', 1)
+    JOIN target_stocks t ON m.stock_id::text = SPLIT_PART(t.symbol, '.', 1)
     LEFT JOIN latest_remarks r ON m.stock_id = r.stock_id
     WHERE t.return_bin = '{selected_bin}'  -- 這裡直接對齊字串
       AND (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')

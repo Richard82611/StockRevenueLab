@@ -244,7 +244,7 @@ def fetch_timing_data(year, metric_col, limit, keyword, price_field="w_close"):
             AVG(CASE WHEN c.date > e.base_date + interval '4 days' AND c.date <= e.base_date + interval '11 days' THEN c.weekly_ret END) as after_week_1,
             AVG(CASE WHEN c.date > e.base_date + interval '11 days' AND c.date <= e.base_date + interval '30 days' THEN c.weekly_ret END) as after_month
         FROM spark_events e
-        JOIN weekly_calc c ON e.stock_id = SPLIT_PART(c.symbol, '.', 1)
+        JOIN weekly_calc c ON e.stock_id::text = SPLIT_PART(c.symbol, '.', 1)
         GROUP BY e.stock_id, e.stock_name, e.report_month, e.{metric_col}, e.remark, e.base_date
     )
     SELECT * FROM final_detail WHERE pre_week IS NOT NULL ORDER BY pre_month DESC;

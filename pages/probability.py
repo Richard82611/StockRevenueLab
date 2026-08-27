@@ -69,7 +69,7 @@ def fetch_prob_data(year, metric_col, low, high, price_field="year_close"):
     joined_data AS (
         SELECT h.hits, p.ret
         FROM hit_table h 
-        JOIN perf_table p ON h.stock_id = p.stock_id
+        JOIN perf_table p ON h.stock_id::text = p.stock_id
     )
     SELECT 
         hits as "爆發次數", 
@@ -121,7 +121,7 @@ def fetch_prob_data_alt(year, metric_col, low, high, price_field="year_close"):
     )
     SELECT h.hits, p.ret
     FROM hit_table h 
-    JOIN perf_table p ON h.stock_id = p.stock_id
+    JOIN perf_table p ON h.stock_id::text = p.stock_id
     """
     
     with engine.connect() as conn:
@@ -553,7 +553,7 @@ if not df_prob.empty:
                ROUND(AVG(m.{study_metric})::numeric, 1) as "平均增長%",
                STRING_AGG(DISTINCT CASE WHEN m.remark <> '-' AND m.remark <> '' THEN m.remark END, ' | ') as "關鍵備註"
         FROM hit_table h
-        LEFT JOIN stock_annual_k k ON h.stock_id = SPLIT_PART(k.symbol, '.', 1) AND k.year = '{target_year}'
+        LEFT JOIN stock_annual_k k ON h.stock_id::text = SPLIT_PART(k.symbol, '.', 1) AND k.year = '{target_year}'
         LEFT JOIN monthly_revenue m ON h.stock_id = m.stock_id 
           AND (m.report_month LIKE '{minguo_year}_%' OR m.report_month = '{prev_minguo_year}_12')
         WHERE h.hits = {selected_hits}
