@@ -3,12 +3,21 @@ import pandas as pd
 import numpy as np
 from sqlalchemy import text
 import urllib.parse
+import json
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import time
 # ========== 2. 安全資料庫連線（共用模組） ==========
 from db_connection import get_engine
+from data_status import read_data_status
+
+@st.cache_data(ttl=300)
+def get_data_status():
+    status = read_data_status(get_engine())
+    print("[data-status] " + json.dumps(status, ensure_ascii=False, sort_keys=True), flush=True)
+    return status
+
 @st.cache_data(ttl=3600)
 def get_latest_data_date():
     try:
@@ -48,6 +57,7 @@ st.sidebar.success("💡 想要看『勝率分析』？請點選左側選單的 
 
 # 獲取資料庫最新日期
 latest_date = get_latest_data_date()
+data_status = get_data_status()
 
 # 顯示資料庫狀態（取代原本的計數器）
 st.sidebar.markdown(f"""
@@ -57,6 +67,10 @@ st.sidebar.markdown(f"""
     <small style="color: #666;">當前系統最新數據月份</small>
 </div>
 """, unsafe_allow_html=True)
+
+revenue_cutoff = data_status.get("monthly_revenue", {}).get("max_value") or "資料不足"
+weekly_cutoff = data_status.get("stock_weekly_k", {}).get("max_value") or "資料不足"
+st.sidebar.caption(f"月營收截止：{revenue_cutoff}｜週線截止：{weekly_cutoff}")
 
 st.title("🧪 StockRevenueLab: 全時段飆股基因對帳單")
 st.markdown("#### 透過 16 萬筆真實數據，揭開業績與股價漲幅的神秘面紗")
