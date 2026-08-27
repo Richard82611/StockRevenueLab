@@ -1,25 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sqlalchemy import create_engine, text
-import urllib.parse
+from sqlalchemy import text
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import time
-# ========== 2. 安全資料庫連線 ==========
-@st.cache_resource
-def get_engine():
-    try:
-        DB_PASSWORD = st.secrets["DB_PASSWORD"]
-        PROJECT_REF = st.secrets["PROJECT_REF"]
-        POOLER_HOST = st.secrets["POOLER_HOST"]
-        encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
-        connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
-        return create_engine(connection_string)
-    except Exception as e:
-        st.error("❌ 資料庫連線失敗，請檢查 Streamlit Secrets 設定。")
-        st.stop()
+# ========== 2. 安全資料庫連線（共用模組） ==========
+from db_connection import get_engine
 @st.cache_data(ttl=3600)
 def get_latest_data_date():
     try:

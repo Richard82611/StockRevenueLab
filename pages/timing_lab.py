@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy import stats
-from sqlalchemy import create_engine, text
-import urllib.parse
+from sqlalchemy import text
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -23,19 +22,14 @@ st.set_page_config(
     page_icon="📊"
 )
 
-# ========== 2. 安全資料庫連線 ==========
-@st.cache_resource
-def get_engine():
-    try:
-        DB_PASSWORD = st.secrets["DB_PASSWORD"]
-        PROJECT_REF = st.secrets["PROJECT_REF"]
-        POOLER_HOST = st.secrets["POOLER_HOST"]
-        encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
-        connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
-        return create_engine(connection_string)
-    except Exception:
-        st.error("❌ 資料庫連線失敗")
-        st.stop()
+# ========== 2. 安全資料庫連線（共用模組） ==========
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from db_connection import get_engine
 
 # ========== 3. 數據輔助函數 ==========
 def get_ai_summary_dist(df, col_name):

@@ -1,26 +1,21 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sqlalchemy import create_engine, text
-import urllib.parse
+from sqlalchemy import text
 import plotly.graph_objects as go
 
 # ========== 1. 頁面配置 ==========
 st.set_page_config(page_title="機率研究室 2.0 | StockRevenueLab", layout="wide")
 
-# ========== 2. 安全資料庫連線 ==========
-@st.cache_resource
-def get_engine():
-    try:
-        DB_PASSWORD = st.secrets["DB_PASSWORD"]
-        PROJECT_REF = st.secrets["PROJECT_REF"]
-        POOLER_HOST = st.secrets["POOLER_HOST"]
-        encoded_password = urllib.parse.quote_plus(DB_PASSWORD)
-        connection_string = f"postgresql://postgres.{PROJECT_REF}:{encoded_password}@{POOLER_HOST}:5432/postgres?sslmode=require"
-        return create_engine(connection_string)
-    except Exception:
-        st.error("❌ 資料庫連線失敗，請檢查 Secrets 設定")
-        st.stop()
+# ========== 2. 安全資料庫連線（共用模組） ==========
+import os
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from db_connection import get_engine
 
 # ========== 3. 新增：獲取前後年度比較數據 ==========
 @st.cache_data(ttl=3600)
