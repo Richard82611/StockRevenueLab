@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import urllib.parse
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+
+logger = logging.getLogger(__name__)
 
 _SECTIONS = ("supabase", "postgres", "postgresql", "database", "db", "connections")
 _ALIASES = {
@@ -170,6 +173,7 @@ def get_engine():
     try:
         url, endpoint = _connection_url()
     except ValueError as exc:
+        logger.error("Database configuration invalid: %s", exc)
         st.error(f"❌ {exc}")
         st.markdown("請到 **Manage app → Settings → Secrets** 設定：")
         st.code(_SAMPLE_TOML, language="toml")
@@ -187,10 +191,12 @@ def get_engine():
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
+        logger.error("Database connectivity check failed: %s", type(exc).__name__)
         detail = _redact(str(exc), url)
         st.error(f"❌ 資料庫連線失敗：{type(exc).__name__}")
         st.warning(_diagnose(detail))
         with st.expander("技術細節（不含密碼）"):
             st.code(f"endpoint={endpoint}\n\n{detail}")
         st.stop()
+    logger.info("Database connectivity check succeeded")
     return engine
