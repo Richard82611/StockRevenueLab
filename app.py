@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sqlalchemy import text
+import urllib.parse
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime

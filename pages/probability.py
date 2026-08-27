@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sqlalchemy import text
+import urllib.parse
 import plotly.graph_objects as go
 
 # ========== 1. 頁面配置 ==========
