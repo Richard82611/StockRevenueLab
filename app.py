@@ -12,6 +12,12 @@ import time
 from db_connection import get_engine
 from data_status import read_data_status
 from analysis_periods import available_analysis_years, year_label
+from detail_table import (
+    DetailDataContractError,
+    detail_missing_summary,
+    prepare_detail_results,
+    style_detail_results,
+)
 
 @st.cache_data(ttl=300)
 def get_data_status():
@@ -761,6 +767,8 @@ if not df.empty:
         ROUND(AVG(m.mom_pct)::numeric, 1) as "月增MoM平均%",
         ROUND(STDDEV(m.yoy_pct)::numeric, 1) as "年增YoY波動%",
         ROUND(STDDEV(m.mom_pct)::numeric, 1) as "月增MoM波動%",
+        COUNT(DISTINCT CASE WHEN m.yoy_pct IS NOT NULL THEN m.report_month END)::integer as "年增YoY有效月數",
+        COUNT(DISTINCT CASE WHEN m.mom_pct IS NOT NULL THEN m.report_month END)::integer as "月增MoM有效月數",
         r.remark as "最新營收備註"
     FROM monthly_revenue m
     JOIN target_stocks t ON m.stock_id::text = SPLIT_PART(t.symbol, '.', 1)
@@ -777,25 +785,33 @@ if not df.empty:
         res_df = pd.read_sql_query(text(detail_query), conn)
         if not res_df.empty:
             st.write(f"🏆 在 **{selected_bin}** 區間中，符合條件的前 {len(res_df)} 檔公司：")
-            
-            # 添加排序選項
-            sort_col = st.selectbox("排序依據", 
-                                   ["年度股價實際漲幅%", "年增YoY平均%", "月增MoM平均%", "年增YoY波動%", "月增MoM波動%"])
-            res_df_sorted = res_df.sort_values(by=sort_col, ascending=False)
-            
-            st.dataframe(
-                res_df_sorted.style.format({
-                    "年度股價實際漲幅%": "{:.1f}%",
-                    "年增YoY平均%": "{:.1f}%",
-                    "月增MoM平均%": "{:.1f}%",
-                    "年增YoY波動%": "{:.1f}%",
-                    "月增MoM波動%": "{:.1f}%"
-                }).background_gradient(cmap='RdYlGn', subset=["年度股價實際漲幅%"])
-                .background_gradient(cmap='YlOrRd', subset=["年增YoY平均%", "月增MoM平均%"])
-                .background_gradient(cmap='Blues', subset=["年增YoY波動%", "月增MoM波動%"]),
-                use_container_width=True,
-                height=500
-            )
+
+            try:
+                res_df = prepare_detail_results(res_df)
+            except DetailDataContractError as exc:
+                print(f"[detail-table-contract] {exc}", flush=True)
+                st.error("公司明細資料品質檢查未通過，表格已停止顯示；請由管理者查看部署日誌。")
+            else:
+                # 排序必須在資料型別驗證後執行，避免 Decimal、字串與 NULL 混排。
+                sort_col = st.selectbox(
+                    "排序依據",
+                    ["年度股價實際漲幅%", "年增YoY平均%", "月增MoM平均%", "年增YoY波動%", "月增MoM波動%"],
+                )
+                res_df_sorted = res_df.sort_values(
+                    by=sort_col, ascending=False, na_position="last"
+                )
+                affected_rows, missing_cells = detail_missing_summary(res_df_sorted)
+                if missing_cells:
+                    st.warning(
+                        f"資料品質提示：{affected_rows} 檔公司共有 {missing_cells} 個統計值缺失；"
+                        "表格以「—」呈現，請搭配有效月數判讀。"
+                    )
+
+                st.dataframe(
+                    style_detail_results(res_df_sorted),
+                    use_container_width=True,
+                    height=500,
+                )
         else:
             st.info("💡 目前區間或關鍵字下找不到符合的公司。")
     
