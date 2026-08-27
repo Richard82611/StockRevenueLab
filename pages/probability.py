@@ -17,6 +17,13 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from db_connection import get_engine
+from data_status import read_data_status
+from analysis_periods import available_analysis_years, year_label
+
+@st.cache_data(ttl=300)
+def get_period_context():
+    engine = get_engine()
+    return available_analysis_years(engine), read_data_status(engine)
 
 # ========== 3. 新增：獲取前後年度比較數據 ==========
 @st.cache_data(ttl=3600)
@@ -203,7 +210,18 @@ st.markdown("""
 
 with st.sidebar:
     st.header("🔬 研究參數設定")
-    target_year = st.sidebar.selectbox("目標年度", [str(y) for y in range(2025, 2019, -1)], index=1)
+    analysis_years, freshness = get_period_context()
+    latest_price_date = freshness.get("stock_prices", {}).get("max_value")
+    revenue_cutoff = freshness.get("monthly_revenue", {}).get("max_value") or "資料不足"
+    target_year = st.sidebar.selectbox(
+        "目標年度",
+        analysis_years,
+        index=0,
+        format_func=lambda value: year_label(value, latest_price_date),
+    )
+    st.caption(f"股價截止：{latest_price_date or '資料不足'}｜月營收截止：{revenue_cutoff}")
+    if latest_price_date and target_year == latest_price_date[:4]:
+        st.info("目前年度為 YTD；勝率與年度報酬不是完整年度結果。")
     
     study_metric = st.selectbox(
         "研究指標",

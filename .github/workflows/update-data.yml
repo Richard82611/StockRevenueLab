@@ -1,0 +1,72 @@
+name: Update official Taiwan stock data
+
+on:
+  schedule:
+    # 18:30 Asia/Taipei, after the completed daily market files are available.
+    - cron: "30 10 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: "Optional cutoff date (YYYY-MM-DD); blank means today"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stockrevenuelab-official-data-update
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-data.txt
+
+      - name: Install data dependencies
+        run: python -m pip install --requirement requirements-data.txt
+
+      - name: Build sealed official snapshot
+        env:
+          AS_OF: ${{ inputs.as_of }}
+        run: |
+          if [ -n "$AS_OF" ]; then
+            python -m pipeline.build_snapshot --as-of "$AS_OF" --output data/latest_snapshot.json.gz
+          else
+            python -m pipeline.build_snapshot --output data/latest_snapshot.json.gz
+          fi
+
+      - name: Run parser and integrity tests
+        run: python -m unittest -v test_pipeline.py
+
+      - name: Publish changed snapshot
+        run: |
+          if git diff --quiet -- data/latest_snapshot.json.gz; then
+            echo "Official data is unchanged; no commit required."
+            exit 0
+          fi
+          git config user.name "stockrevenuelab-data-bot"
+          git config user.email "stockrevenuelab-data-bot@users.noreply.github.com"
+          git add data/latest_snapshot.json.gz
+          git commit -m "data: refresh official Taiwan market snapshot"
+          git push origin HEAD:main
+
+      - name: Write failure summary
+        if: failure()
+        run: |
+          {
+            echo "## Official data update failed"
+            echo
+            echo "No snapshot was published. Existing database cutoffs must remain visible as stale."
+            echo "Inspect the TWSE, TPEx, and MOPS request or coverage failure above."
+          } >> "$GITHUB_STEP_SUMMARY"

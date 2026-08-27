@@ -31,6 +31,13 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from db_connection import get_engine
+from data_status import read_data_status
+from analysis_periods import available_analysis_years, year_label
+
+@st.cache_data(ttl=300)
+def get_period_context():
+    engine = get_engine()
+    return available_analysis_years(engine), read_data_status(engine)
 
 # ========== 3. 數據輔助函數 ==========
 def get_ai_summary_dist(df, col_name):
@@ -258,7 +265,18 @@ with st.sidebar:
     st.title("🔬 參數設定")
     
     st.markdown("---")
-    target_year = st.selectbox("分析年度", [str(y) for y in range(2025, 2019, -1)], index=1)
+    analysis_years, freshness = get_period_context()
+    latest_price_date = freshness.get("stock_prices", {}).get("max_value")
+    revenue_cutoff = freshness.get("monthly_revenue", {}).get("max_value") or "資料不足"
+    target_year = st.selectbox(
+        "分析年度",
+        analysis_years,
+        index=0,
+        format_func=lambda value: year_label(value, latest_price_date),
+    )
+    st.caption(f"股價截止：{latest_price_date or '資料不足'}｜月營收截止：{revenue_cutoff}")
+    if latest_price_date and target_year == latest_price_date[:4]:
+        st.info("目前年度為 YTD 事件研究，不代表完整年度結果。")
     study_metric = st.radio("指標選擇", ["yoy_pct", "mom_pct"])
     threshold = st.slider(f"爆發門檻 %", 30, 300, 100)
     search_remark = st.text_input("🔍 關鍵字搜尋", "")

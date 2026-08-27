@@ -91,6 +91,7 @@ class DatabaseConnectionTests(unittest.TestCase):
         with (
             patch.object(db_connection, "_connection_url", return_value=(fake_url, {})),
             patch.object(db_connection, "create_engine", return_value=engine) as create,
+            patch.object(db_connection, "_sync_latest_snapshot", return_value=None),
         ):
             result = db_connection.get_engine.__wrapped__()
 

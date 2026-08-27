@@ -11,6 +11,7 @@ import time
 # ========== 2. 安全資料庫連線（共用模組） ==========
 from db_connection import get_engine
 from data_status import read_data_status
+from analysis_periods import available_analysis_years, year_label
 
 @st.cache_data(ttl=300)
 def get_data_status():
@@ -81,7 +82,15 @@ st.markdown("#### 透過 16 萬筆真實數據，揭開業績與股價漲幅的�
 st.sidebar.header("🔬 研究條件篩選")
 
 # 1. 定義年度
-target_year = st.sidebar.selectbox("分析年度", [str(y) for y in range(2026, 2019, -1)], index=1)
+analysis_years = available_analysis_years(get_engine())
+target_year = st.sidebar.selectbox(
+    "分析年度",
+    analysis_years,
+    index=0,
+    format_func=lambda value: year_label(value, latest_date),
+)
+if latest_date and target_year == latest_date[:4]:
+    st.sidebar.info("目前年度為 YTD 分析，不代表完整年度結果。")
 
 # 2. 定義指標
 metric_choice = st.sidebar.radio("成長指標", ["年增率 (YoY)", "月增率 (MoM)"], help="YoY看長期趨勢，MoM看短期爆發")

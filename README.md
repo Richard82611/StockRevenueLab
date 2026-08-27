@@ -7,7 +7,7 @@ StockRevenueLab 是一個整合「自動化數據爬蟲」、「雲端資料庫�
 ## 🌐 專案資源導覽
 
 * **🏠 分析沙龍中心**: [StockRevenueLab 數據觀測站](https://vocus.cc/salon/grissomlin/room/695636ee0c0c0689d1e2aa9f)
-* **📈 線上互動儀表板**: [立即開啟 Streamlit App](https://stockrevenuelab-jlfqljhuy5q9appppwy2bg8a.streamlit.app/)
+* **📈 線上互動儀表板**: [立即開啟 Streamlit App](https://stockrevenuelab-mag2pyurqsfdq7ibcte7cq.streamlit.app/)
 * **🐍 自動化爬蟲工具**: [Google Colab 一鍵執行](https://colab.research.google.com/github/grissomlin/StockRevenueLab/blob/main/%E3%80%8C%E8%B2%A1%E5%A0%B1%E5%84%80%E8%A1%A8%E6%9D%BF%E7%9B%B8%E9%97%9C%E7%A8%8B%E5%BC%8F%E7%A2%BC%E3%80%8D_github.ipynb)
 * **🤖 深度量化報告**: [AI 數據解析研究文](https://vocus.cc/salon/grissomlin/room/691d4eb84129bde974b100df) (透過 AI 診斷之台股深度分析)
 
@@ -50,11 +50,24 @@ StockRevenueLab 是一個整合「自動化數據爬蟲」、「雲端資料庫�
 
 ## 🚀 技術架構與教學
 
-本專案採用的技術棧包括 Python, Streamlit, PostgreSQL (Supabase), 以及 yfinance。
+本專案採用的技術棧包括 Python、Streamlit 與 PostgreSQL (Supabase)。正式增量更新使用 TWSE、TPEx 與 MOPS 官方資料；舊 Notebook 的 yfinance 流程只保留為歷史研究範例。
 
 * **數據抓取與同步**: 如何自動抓取月營收與股價並同步至雲端資料庫。
   * **📖 詳細教學**: [打造個人台股財報儀表板](https://vocus.cc/article/695636c3fd89780001d873bd)
 * **AI 診斷引擎**: 整合 LLM 提示詞工程，自動將統計數據轉化為量化診斷報告。
+
+## 🔄 官方資料自動更新
+
+`Update official Taiwan stock data` 工作流在台北時間每個工作日 18:30 執行，也支援手動指定截止日：
+
+1. 從 TWSE 每日收盤行情與 TPEx 上櫃股票行情尋找最近共同完整交易日。
+2. 從 MOPS 取得最近完整月營收，涵蓋上市、上櫃、興櫃及 KY 報表。
+3. 執行市場覆蓋、四位數公司代號、重複鍵、筆數與 SHA-256 完整性檢查。
+4. 只在官方內容改變時更新 `data/latest_snapshot.json.gz`，避免無意義提交。
+5. Streamlit 重部署後使用既有 Secrets、PostgreSQL advisory lock 與冪等交易套用快照。
+6. `data_update_runs` 保留每次 PASS／FAIL、來源截止與寫入筆數；失敗時沿用舊資料並顯示真實截止日。
+
+目前自動化只更新已完成的日資料與已完整公布的月資料。當年度分析會標示為 YTD，不會包裝成完整年度績效。
 
 ---
 

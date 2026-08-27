@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import urllib.parse
+from pathlib import Path
 import streamlit as st
 from sqlalchemy import create_engine, text
 
@@ -170,6 +171,15 @@ def _diagnose(message: str) -> str:
     return "請確認 Supabase 專案狀態，以及 Streamlit Secrets 中的 Session pooler URI。"
 
 
+def _sync_latest_snapshot(engine) -> dict | None:
+    snapshot_path = Path(__file__).resolve().parent / "data" / "latest_snapshot.json.gz"
+    if not snapshot_path.exists():
+        return None
+    from snapshot_sync import apply_snapshot_file
+
+    return apply_snapshot_file(engine, snapshot_path)
+
+
 @st.cache_resource(show_spinner="連線資料庫中…")
 def get_engine():
     try:
@@ -201,4 +211,11 @@ def get_engine():
             st.code(f"endpoint={endpoint}\n\n{detail}")
         st.stop()
     print("[db] connectivity check succeeded", flush=True)
+    try:
+        sync_result = _sync_latest_snapshot(engine)
+        if sync_result:
+            print("[snapshot-sync] " + str(sync_result), flush=True)
+    except Exception as exc:
+        logger.error("Bundled snapshot sync failed: %s", type(exc).__name__)
+        st.warning("⚠️ 最新官方資料快照未能套用；目前顯示既有資料，請查看 Cloud logs。")
     return engine
