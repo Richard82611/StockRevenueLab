@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 
 
 logger = logging.getLogger(__name__)
+_DEFAULT_POOLER_HOST = "aws-1-ap-southeast-1.pooler.supabase.com"
 
 _SECTIONS = ("supabase", "postgres", "postgresql", "database", "db", "connections")
 _ALIASES = {
@@ -109,7 +110,9 @@ def _connection_url() -> tuple[str, dict[str, str]]:
 
     password = _get_secret("password")
     project_ref = _get_secret("project_ref")
-    host = _get_secret("host")
+    # 此專案原始 Notebook 已固定使用 Supabase Singapore Session Pooler。
+    # 保留 Secrets 覆寫能力，避免未來搬移 region 時需改程式碼。
+    host = _get_secret("host", _DEFAULT_POOLER_HOST)
     port = _get_secret("port", "5432")
     dbname = _get_secret("dbname", "postgres")
     user = _get_secret("user") or (f"postgres.{project_ref}" if project_ref else None)
@@ -119,7 +122,6 @@ def _connection_url() -> tuple[str, dict[str, str]]:
         for label, value in (
             ("DB_PASSWORD", password),
             ("PROJECT_REF", project_ref),
-            ("POOLER_HOST", host),
         )
         if not value
     ]
@@ -198,5 +200,5 @@ def get_engine():
         with st.expander("技術細節（不含密碼）"):
             st.code(f"endpoint={endpoint}\n\n{detail}")
         st.stop()
-    logger.info("Database connectivity check succeeded")
+    print("[db] connectivity check succeeded", flush=True)
     return engine

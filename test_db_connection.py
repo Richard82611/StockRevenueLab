@@ -49,10 +49,25 @@ class DatabaseConnectionTests(unittest.TestCase):
         )
         self.assertEqual(endpoint, {"mode": "DATABASE_URL"})
 
-    def test_reports_missing_fields_without_values(self):
+    def test_uses_project_pooler_default_when_host_is_missing(self):
+        self.set_secrets(
+            {
+                "supabase": {
+                    "SUPABASE_PROJECT_ID": "project123",
+                    "SUPABASE_PASSWORD": "secret",
+                }
+            }
+        )
+
+        url, endpoint = db_connection._connection_url()
+
+        self.assertIn("@aws-1-ap-southeast-1.pooler.supabase.com:5432/", url)
+        self.assertEqual(endpoint["host"], "aws-1-ap-southeast-1.pooler.supabase.com")
+
+    def test_reports_missing_password_without_values(self):
         self.set_secrets({"supabase": {"SUPABASE_PROJECT_ID": "project123"}})
 
-        with self.assertRaisesRegex(ValueError, "DB_PASSWORD、POOLER_HOST"):
+        with self.assertRaisesRegex(ValueError, "DB_PASSWORD"):
             db_connection._connection_url()
 
     def test_redacts_encoded_and_plain_password(self):
