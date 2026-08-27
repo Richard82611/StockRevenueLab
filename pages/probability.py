@@ -19,6 +19,7 @@ if _ROOT not in sys.path:
 from db_connection import get_engine
 from data_status import read_data_status
 from analysis_periods import available_analysis_years, year_label
+from table_display import numeric_column_formats, streamlit_display_frame
 
 @st.cache_data(ttl=300)
 def get_period_context():
@@ -288,13 +289,23 @@ if not df_prob.empty:
     # 確保所有需要的欄位都存在
     available_cols = [col for col in display_cols if col in df_prob.columns]
     
-    st.dataframe(df_prob[available_cols].style.format({
+    probability_formats = {
         "平均年度漲幅%": "{:.1f}%",
         "中位數漲幅%": "{:.1f}%",
         "勝率(>20%)": "{:.1f}%", 
         "翻倍率(>100%)": "{:.1f}%",
         "標準差%": "{:.1f}%"
-    }), use_container_width=True)
+    }
+    probability_formats = {
+        column: template
+        for column, template in probability_formats.items()
+        if column in available_cols
+    }
+    st.dataframe(
+        streamlit_display_frame(df_prob[available_cols], probability_formats),
+        use_container_width=True,
+        hide_index=True,
+    )
     
     # ========== B. 視覺化分析 ==========
     if show_advanced and len(df_prob) > 1:
@@ -380,13 +391,24 @@ if not df_prob.empty:
                 
                 available_expected_cols = [col for col in display_expected_cols if col in expected_df.columns]
                 
-                st.dataframe(expected_df[available_expected_cols].style.format({
+                expected_formats = {
                     "平均年度漲幅%": "{:.1f}",
                     "中位數漲幅%": "{:.1f}",
                     "平均-中位差": "{:.1f}",
                     "綜合評分": "{:.2f}"
-                }).highlight_max(subset=["綜合評分"], color='lightgreen'), 
-                use_container_width=True)
+                }
+                expected_formats = {
+                    column: template
+                    for column, template in expected_formats.items()
+                    if column in available_expected_cols
+                }
+                st.dataframe(
+                    streamlit_display_frame(
+                        expected_df[available_expected_cols], expected_formats
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
     
     # ========== D. AI 分析助手區 ==========
     st.markdown("---")
@@ -537,10 +559,22 @@ if not df_prob.empty:
                         
                         # 合併顯示
                         st.write("### 前後年度平均報酬 (%)")
-                        st.dataframe(pivot_mean, use_container_width=True)
+                        st.dataframe(
+                            streamlit_display_frame(
+                                pivot_mean,
+                                numeric_column_formats(pivot_mean, "{:.1f}%"),
+                            ),
+                            use_container_width=True,
+                        )
                         
                         st.write("### 前後年度中位數報酬 (%)")
-                        st.dataframe(pivot_median, use_container_width=True)
+                        st.dataframe(
+                            streamlit_display_frame(
+                                pivot_median,
+                                numeric_column_formats(pivot_median, "{:.1f}%"),
+                            ),
+                            use_container_width=True,
+                        )
                         
         except Exception as e:
             st.error(f"前後年度數據查詢失敗: {str(e)}")
@@ -602,7 +636,16 @@ if not df_prob.empty:
                     col_s3.metric("上漲檔數", f"{positive_count}檔")
                     col_s4.metric("上漲比例", f"{positive_rate:.1f}%")
                 
-                st.dataframe(detail_df, use_container_width=True)
+                detail_formats = {
+                    column: "{:.1f}%"
+                    for column in ("年度漲幅%", "平均增長%")
+                    if column in detail_df.columns
+                }
+                st.dataframe(
+                    streamlit_display_frame(detail_df, detail_formats),
+                    use_container_width=True,
+                    hide_index=True,
+                )
                 
                 # 下載按鈕
                 st.download_button(

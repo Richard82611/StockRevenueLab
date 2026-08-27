@@ -6,8 +6,8 @@ import pandas as pd
 from detail_table import (
     DetailDataContractError,
     detail_missing_summary,
+    display_detail_results,
     prepare_detail_results,
-    style_detail_results,
 )
 
 
@@ -50,13 +50,16 @@ class DetailTableContractTests(unittest.TestCase):
         with self.assertRaisesRegex(DetailDataContractError, "缺少必要欄位"):
             prepare_detail_results(frame)
 
-    def test_styler_renders_nulls_instead_of_raising_type_error(self):
+    def test_streamlit_payload_contains_no_null_or_none_text(self):
         prepared = prepare_detail_results(detail_frame())
 
-        html = style_detail_results(prepared).to_html()
+        display = display_detail_results(prepared)
 
-        self.assertIn("—", html)
-        self.assertIn("12.3%", html)
+        self.assertEqual(display.loc[1, "年增YoY平均%"], "—")
+        self.assertEqual(display.loc[1, "年增YoY波動%"], "—")
+        self.assertEqual(display.loc[0, "年度股價實際漲幅%"], "12.3%")
+        self.assertFalse(display.isna().any().any())
+        self.assertFalse((display.astype(str) == "None").to_numpy().any())
 
 
 if __name__ == "__main__":

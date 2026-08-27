@@ -15,9 +15,11 @@ from analysis_periods import available_analysis_years, year_label
 from detail_table import (
     DetailDataContractError,
     detail_missing_summary,
+    display_detail_results,
     prepare_detail_results,
-    style_detail_results,
 )
+from table_display import numeric_column_formats, streamlit_display_frame
+from statistics_sql import heatmap_aggregate, validate_heatmap_identifiers
 
 @st.cache_data(ttl=300)
 def get_data_status():
@@ -131,46 +133,12 @@ stat_method = st.sidebar.selectbox("統計指標模式", stat_methods, index=0)
 # ========== 3. 數據抓取引擎 (支援多種統計模式，下跌10%間隔，上漲100%間隔) ==========
 @st.cache_data(ttl=3600)
 def fetch_heatmap_data(year, metric_col, stat_method, price_field="year_close"):
+    validate_heatmap_identifiers(metric_col, price_field)
     engine = get_engine()
     minguo_year = int(year) - 1911
     prev_minguo_year = minguo_year - 1
     
-    # 根據統計方法選擇聚合函數
-    if stat_method == "中位數 (排除極端值)":
-        agg_func = f"percentile_cont(0.5) WITHIN GROUP (ORDER BY m.{metric_col})"
-        stat_label = "中位數"
-    elif stat_method == "平均值 (含極端值)":
-        agg_func = f"AVG(m.{metric_col})"
-        stat_label = "平均值"
-    elif stat_method == "標準差 (波動程度)":
-        agg_func = f"STDDEV(m.{metric_col})"
-        stat_label = "標準差"
-    elif stat_method == "變異係數 (相對波動)":
-        agg_func = f"CASE WHEN AVG(m.{metric_col}) = 0 THEN 0 ELSE (STDDEV(m.{metric_col}) / ABS(AVG(m.{metric_col}))) * 100 END"
-        stat_label = "變異係數%"
-    elif stat_method == "偏度 (分佈形狀)":
-        agg_func = f"""
-        CASE WHEN STDDEV(m.{metric_col}) = 0 THEN 0 
-             ELSE (AVG(POWER((m.{metric_col} - AVG(m.{metric_col}))/NULLIF(STDDEV(m.{metric_col}),0), 3))) 
-        END
-        """
-        stat_label = "偏度"
-    elif stat_method == "峰度 (尾部厚度)":
-        agg_func = f"""
-        CASE WHEN STDDEV(m.{metric_col}) = 0 THEN 0 
-             ELSE (AVG(POWER((m.{metric_col} - AVG(m.{metric_col}))/NULLIF(STDDEV(m.{metric_col}),0), 4)) - 3) 
-        END
-        """
-        stat_label = "峰度"
-    elif stat_method == "四分位距 (離散程度)":
-        agg_func = f"percentile_cont(0.75) WITHIN GROUP (ORDER BY m.{metric_col}) - percentile_cont(0.25) WITHIN GROUP (ORDER BY m.{metric_col})"
-        stat_label = "四分位距"
-    elif stat_method == "正樣本比例":
-        agg_func = f"SUM(CASE WHEN m.{metric_col} > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*)"
-        stat_label = "正增長比例%"
-    else:
-        agg_func = f"AVG(m.{metric_col})"
-        stat_label = "平均值"
+    agg_func, stat_label = heatmap_aggregate(metric_col, stat_method)
     
     # 修改這裡：下跌10%間隔，上漲100%間隔
     query = f"""
@@ -267,6 +235,7 @@ def fetch_heatmap_data(year, metric_col, stat_method, price_field="year_close"):
 # ========== 4. 統計摘要數據抓取 (修改版，下跌10%間隔，上漲100%間隔) ==========
 @st.cache_data(ttl=3600)
 def fetch_stat_summary(year, metric_col, price_field="year_close"):
+    validate_heatmap_identifiers(metric_col, price_field)
     engine = get_engine()
     minguo_year = int(year) - 1911
     prev_minguo_year = minguo_year - 1
@@ -362,6 +331,162 @@ def fetch_stat_summary(year, metric_col, price_field="year_close"):
     
     with engine.connect() as conn:
         return pd.read_sql_query(text(query), conn)
+
+
+@st.cache_data(ttl=3600)
+def fetch_detail_results(year, price_field, selected_bin, display_limit, search_keyword):
+    """Fetch one detail slice with bound user values and validated identifiers."""
+
+    if price_field not in {"year_close", "year_high"}:
+        raise ValueError("不支援的價格欄位")
+    if int(display_limit) not in {10, 20, 50, 100}:
+        raise ValueError("不支援的顯示筆數")
+
+    minguo_year = int(year) - 1911
+    params = {
+        "target_year": str(year),
+        "year_prefix": f"{minguo_year}_%",
+        "year_cutoff": f"{minguo_year}_12",
+        "previous_december": f"{minguo_year - 1}_12",
+        "selected_bin": str(selected_bin),
+        "search_keyword": str(search_keyword),
+        "display_limit": int(display_limit),
+    }
+    query = text(f"""
+    WITH target_stocks AS (
+        SELECT symbol,
+            (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 AS annual_ret,
+            CASE
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 <= -100 THEN '00. 下跌-100%以下'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -90 THEN '01. 下跌-100%至-90%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -80 THEN '02. 下跌-90%至-80%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -70 THEN '03. 下跌-80%至-70%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -60 THEN '04. 下跌-70%至-60%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -50 THEN '05. 下跌-60%至-50%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -40 THEN '06. 下跌-50%至-40%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -30 THEN '07. 下跌-40%至-30%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -20 THEN '08. 下跌-30%至-20%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < -10 THEN '09. 下跌-20%至-10%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 0 THEN '10. 下跌-10%至0%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 100 THEN '11. 上漲0-100%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 200 THEN '12. 上漲100-200%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 300 THEN '13. 上漲200-300%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 400 THEN '14. 上漲300-400%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 500 THEN '15. 上漲400-500%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 600 THEN '16. 上漲500-600%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 700 THEN '17. 上漲600-700%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 800 THEN '18. 上漲700-800%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 900 THEN '19. 上漲800-900%'
+                WHEN (({price_field} - year_open) / NULLIF(year_open, 0)) * 100 < 1000 THEN '20. 上漲900-1000%'
+                ELSE '21. 上漲1000%以上'
+            END AS return_bin
+        FROM stock_annual_k
+        WHERE year = :target_year
+    ),
+    latest_remarks AS (
+        SELECT DISTINCT ON (stock_id) stock_id, remark
+        FROM monthly_revenue
+        WHERE (
+            report_month LIKE :year_prefix AND report_month < :year_cutoff
+            OR report_month = :previous_december
+        )
+          AND remark IS NOT NULL AND remark <> '-' AND remark <> ''
+        ORDER BY stock_id, report_month DESC
+    )
+    SELECT
+        m.stock_id AS "代號",
+        m.stock_name AS "名稱",
+        ROUND(t.annual_ret::numeric, 1) AS "年度股價實際漲幅%",
+        ROUND(AVG(m.yoy_pct)::numeric, 1) AS "年增YoY平均%",
+        ROUND(AVG(m.mom_pct)::numeric, 1) AS "月增MoM平均%",
+        ROUND(STDDEV(m.yoy_pct)::numeric, 1) AS "年增YoY波動%",
+        ROUND(STDDEV(m.mom_pct)::numeric, 1) AS "月增MoM波動%",
+        COUNT(DISTINCT CASE WHEN m.yoy_pct IS NOT NULL THEN m.report_month END)::integer AS "年增YoY有效月數",
+        COUNT(DISTINCT CASE WHEN m.mom_pct IS NOT NULL THEN m.report_month END)::integer AS "月增MoM有效月數",
+        r.remark AS "最新營收備註"
+    FROM monthly_revenue m
+    JOIN target_stocks t ON m.stock_id::text = SPLIT_PART(t.symbol, '.', 1)
+    LEFT JOIN latest_remarks r ON m.stock_id = r.stock_id
+    WHERE t.return_bin = :selected_bin
+      AND (
+          m.report_month LIKE :year_prefix AND m.report_month < :year_cutoff
+          OR m.report_month = :previous_december
+      )
+      AND (
+          STRPOS(LOWER(COALESCE(m.stock_name, '')), LOWER(:search_keyword)) > 0
+          OR STRPOS(LOWER(COALESCE(r.remark, '')), LOWER(:search_keyword)) > 0
+      )
+    GROUP BY m.stock_id, m.stock_name, t.annual_ret, r.remark
+    ORDER BY "年度股價實際漲幅%" DESC
+    LIMIT :display_limit
+    """)
+
+    with get_engine().connect() as conn:
+        return pd.read_sql_query(query, conn, params=params)
+
+
+@st.fragment
+def render_detail_explorer(target_year, price_field, available_bins):
+    """Redraw the filters and their results as one atomic UI fragment."""
+
+    col_a, col_b, col_c = st.columns([1, 1, 2])
+    with col_a:
+        selected_bin = st.selectbox(
+            "🎯 選擇漲幅區間：", available_bins, key="detail_return_bin"
+        )
+    with col_b:
+        display_limit = st.select_slider(
+            "顯示筆數", options=[10, 20, 50, 100], value=50, key="detail_limit"
+        )
+    with col_c:
+        search_keyword = st.text_input(
+            "💡 備註關鍵字（如：建案、訂單、CoWoS、新機）：",
+            "",
+            key="detail_keyword",
+        )
+
+    with st.spinner(f"正在載入「{selected_bin}」…", show_time=True):
+        res_df = fetch_detail_results(
+            target_year, price_field, selected_bin, display_limit, search_keyword
+        )
+
+    if res_df.empty:
+        st.info("💡 目前區間或關鍵字下找不到符合的公司。")
+        return
+
+    st.write(f"🏆 在 **{selected_bin}** 區間中，符合條件的前 {len(res_df)} 檔公司：")
+    try:
+        res_df = prepare_detail_results(res_df)
+    except DetailDataContractError as exc:
+        print(f"[detail-table-contract] {exc}", flush=True)
+        st.error("公司明細資料品質檢查未通過，表格已停止顯示；請由管理者查看部署日誌。")
+        return
+
+    sort_col = st.selectbox(
+        "排序依據",
+        [
+            "年度股價實際漲幅%",
+            "年增YoY平均%",
+            "月增MoM平均%",
+            "年增YoY波動%",
+            "月增MoM波動%",
+        ],
+        key="detail_sort",
+    )
+    res_df_sorted = res_df.sort_values(by=sort_col, ascending=False, na_position="last")
+    affected_rows, missing_cells = detail_missing_summary(res_df_sorted)
+    if missing_cells:
+        st.warning(
+            f"資料品質提示：{affected_rows} 檔公司共有 {missing_cells} 個統計值缺失；"
+            "缺值明確顯示為「—」，請搭配有效月數判讀。"
+        )
+
+    st.dataframe(
+        display_detail_results(res_df_sorted),
+        use_container_width=True,
+        height=500,
+        hide_index=True,
+    )
 # ========== 5. AI分析提示詞生成 (整合全維度數據 + 保留原所有任務) ==========
 def generate_ai_prompt(target_year, metric_choice, stat_method, stat_summary, pivot_df, total_samples, price_calc, price_label):
     current_date = datetime.now().strftime("%Y-%m-%d")
@@ -614,7 +739,7 @@ if not df.empty:
             })
             
             st.dataframe(
-                stat_summary_display.style.format({
+                streamlit_display_frame(stat_summary_display, {
                     '平均值': '{:.1f}',
                     '中位數': '{:.1f}',
                     '標準差': '{:.1f}',
@@ -623,12 +748,10 @@ if not df.empty:
                     '變異係數': '{:.2f}',
                     '四分位距': '{:.1f}',
                     '正增長比例%': '{:.1f}%'
-                }).background_gradient(cmap='YlOrRd', subset=['平均值', '中位數'])
-                .background_gradient(cmap='Blues', subset=['標準差', '四分位距'])
-                .background_gradient(cmap='RdYlGn_r', subset=['變異係數'])
-                .background_gradient(cmap='Greens', subset=['正增長比例%']),
+                }),
                 use_container_width=True,
-                height=400
+                height=400,
+                hide_index=True,
             )
 
             # ========== 11. AI分析提示詞區塊 ==========
@@ -707,113 +830,7 @@ if not df.empty:
     - 顯示數據：各股票的{price_label}年度漲幅
     """)
 
-    col_a, col_b, col_c = st.columns([1, 1, 2])
-    with col_a:
-        selected_bin = st.selectbox("🎯 選擇漲幅區間：", pivot_df.index[::-1])
-    with col_b:
-        display_limit = st.select_slider("顯示筆數", options=[10, 20, 50, 100], value=50)
-    with col_c:
-        search_keyword = st.text_input("💡 備註關鍵字（如：建案、訂單、CoWoS、新機）：", "")
-
-    minguo_year = int(target_year) - 1911
-    prev_minguo_year = minguo_year - 1
-    # 修改後的 detail_query 區塊
-    detail_query = f"""
-    WITH target_stocks AS (
-        SELECT symbol, 
-            -- 使用 price_field 計算漲幅（與熱力圖一致）
-            (({price_field} - year_open) / year_open) * 100 as annual_ret,
-            CASE 
-                -- 使用 price_field 計算分類（與熱力圖一致）
-                WHEN (({price_field} - year_open) / year_open) * 100 <= -100 THEN '00. 下跌-100%以下'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -90 THEN '01. 下跌-100%至-90%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -80 THEN '02. 下跌-90%至-80%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -70 THEN '03. 下跌-80%至-70%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -60 THEN '04. 下跌-70%至-60%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -50 THEN '05. 下跌-60%至-50%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -40 THEN '06. 下跌-50%至-40%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -30 THEN '07. 下跌-40%至-30%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -20 THEN '08. 下跌-30%至-20%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < -10 THEN '09. 下跌-20%至-10%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 0 THEN '10. 下跌-10%至0%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 100 THEN '11. 上漲0-100%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 200 THEN '12. 上漲100-200%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 300 THEN '13. 上漲200-300%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 400 THEN '14. 上漲300-400%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 500 THEN '15. 上漲400-500%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 600 THEN '16. 上漲500-600%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 700 THEN '17. 上漲600-700%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 800 THEN '18. 上漲700-800%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 900 THEN '19. 上漲800-900%'
-                WHEN (({price_field} - year_open) / year_open) * 100 < 1000 THEN '20. 上漲900-1000%'
-                ELSE '21. 上漲1000%以上'
-            END AS return_bin
-        FROM stock_annual_k 
-        WHERE year = '{target_year}'
-    ),
-
-    latest_remarks AS (
-        SELECT DISTINCT ON (stock_id) stock_id, remark 
-        FROM monthly_revenue 
-        WHERE (report_month LIKE '{minguo_year}_%' AND report_month < '{minguo_year}_12' OR report_month = '{prev_minguo_year}_12')
-          AND remark IS NOT NULL AND remark <> '-' AND remark <> ''
-        ORDER BY stock_id, report_month DESC
-    )
-    SELECT 
-        m.stock_id as "代號", 
-        m.stock_name as "名稱",
-        ROUND(t.annual_ret::numeric, 1) as "年度股價實際漲幅%",
-        ROUND(AVG(m.yoy_pct)::numeric, 1) as "年增YoY平均%", 
-        ROUND(AVG(m.mom_pct)::numeric, 1) as "月增MoM平均%",
-        ROUND(STDDEV(m.yoy_pct)::numeric, 1) as "年增YoY波動%",
-        ROUND(STDDEV(m.mom_pct)::numeric, 1) as "月增MoM波動%",
-        COUNT(DISTINCT CASE WHEN m.yoy_pct IS NOT NULL THEN m.report_month END)::integer as "年增YoY有效月數",
-        COUNT(DISTINCT CASE WHEN m.mom_pct IS NOT NULL THEN m.report_month END)::integer as "月增MoM有效月數",
-        r.remark as "最新營收備註"
-    FROM monthly_revenue m
-    JOIN target_stocks t ON m.stock_id::text = SPLIT_PART(t.symbol, '.', 1)
-    LEFT JOIN latest_remarks r ON m.stock_id = r.stock_id
-    WHERE t.return_bin = '{selected_bin}'  -- 這裡直接對齊字串
-      AND (m.report_month LIKE '{minguo_year}_%' AND m.report_month < '{minguo_year}_12' OR m.report_month = '{prev_minguo_year}_12')
-      AND (m.stock_name LIKE '%{search_keyword}%' OR (r.remark IS NOT NULL AND r.remark LIKE '%{search_keyword}%'))
-    GROUP BY m.stock_id, m.stock_name, t.annual_ret, r.remark
-    ORDER BY "年度股價實際漲幅%" DESC 
-    LIMIT {display_limit};
-    """
-    
-    with get_engine().connect() as conn:
-        res_df = pd.read_sql_query(text(detail_query), conn)
-        if not res_df.empty:
-            st.write(f"🏆 在 **{selected_bin}** 區間中，符合條件的前 {len(res_df)} 檔公司：")
-
-            try:
-                res_df = prepare_detail_results(res_df)
-            except DetailDataContractError as exc:
-                print(f"[detail-table-contract] {exc}", flush=True)
-                st.error("公司明細資料品質檢查未通過，表格已停止顯示；請由管理者查看部署日誌。")
-            else:
-                # 排序必須在資料型別驗證後執行，避免 Decimal、字串與 NULL 混排。
-                sort_col = st.selectbox(
-                    "排序依據",
-                    ["年度股價實際漲幅%", "年增YoY平均%", "月增MoM平均%", "年增YoY波動%", "月增MoM波動%"],
-                )
-                res_df_sorted = res_df.sort_values(
-                    by=sort_col, ascending=False, na_position="last"
-                )
-                affected_rows, missing_cells = detail_missing_summary(res_df_sorted)
-                if missing_cells:
-                    st.warning(
-                        f"資料品質提示：{affected_rows} 檔公司共有 {missing_cells} 個統計值缺失；"
-                        "表格以「—」呈現，請搭配有效月數判讀。"
-                    )
-
-                st.dataframe(
-                    style_detail_results(res_df_sorted),
-                    use_container_width=True,
-                    height=500,
-                )
-        else:
-            st.info("💡 目前區間或關鍵字下找不到符合的公司。")
+    render_detail_explorer(target_year, price_field, tuple(pivot_df.index[::-1]))
     
     # ========== 13. 原始數據矩陣 (可切換統計模式) ==========
     with st.expander("🔧 查看原始數據矩陣與模式切換"):
@@ -868,7 +885,14 @@ if not df.empty:
                 fmt_str = "{:.1f}"
             
             st.write(f"**{quick_stat} 矩陣**")
-            st.dataframe(pivot_display.style.format(fmt_str), use_container_width=True, height=400)
+            st.dataframe(
+                streamlit_display_frame(
+                    pivot_display,
+                    numeric_column_formats(pivot_display, fmt_str),
+                ),
+                use_container_width=True,
+                height=400,
+            )
             
             # 下載按鈕
             csv = pivot_display.to_csv().encode('utf-8')

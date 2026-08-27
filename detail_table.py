@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from table_display import streamlit_display_frame
+
 
 DETAIL_PERCENT_COLUMNS = (
     "年度股價實際漲幅%",
@@ -56,19 +58,10 @@ def detail_missing_summary(frame: pd.DataFrame) -> tuple[int, int]:
     return int(missing.any(axis=1).sum()), int(missing.sum().sum())
 
 
-def style_detail_results(frame: pd.DataFrame):
-    """Build a Styler that renders valid database NULLs as unavailable values."""
+def display_detail_results(frame: pd.DataFrame) -> pd.DataFrame:
+    """Build the actual Arrow payload used by ``st.dataframe``."""
 
     formatters = {column: "{:.1f}%" for column in DETAIL_PERCENT_COLUMNS}
     formatters.update({column: "{:.0f}" for column in DETAIL_COVERAGE_COLUMNS})
 
-    return (
-        frame.style.format(formatters, na_rep="—")
-        .background_gradient(cmap="RdYlGn", subset=["年度股價實際漲幅%"])
-        .background_gradient(
-            cmap="YlOrRd", subset=["年增YoY平均%", "月增MoM平均%"]
-        )
-        .background_gradient(
-            cmap="Blues", subset=["年增YoY波動%", "月增MoM波動%"]
-        )
-    )
+    return streamlit_display_frame(frame, formatters)

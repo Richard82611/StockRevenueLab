@@ -33,6 +33,7 @@ if _ROOT not in sys.path:
 from db_connection import get_engine
 from data_status import read_data_status
 from analysis_periods import available_analysis_years, year_label
+from table_display import streamlit_display_frame
 
 @st.cache_data(ttl=300)
 def get_period_context():
@@ -209,6 +210,11 @@ def fetch_timing_data(year, metric_col, limit, keyword, price_field="w_close"):
     修改SQL查詢以支援不同的價格計算方式
     price_field: 可以是 'w_close' (收盤價) 或 'w_high' (最高價)
     """
+    if metric_col not in {"yoy_pct", "mom_pct"}:
+        raise ValueError("不支援的營收指標")
+    if price_field not in {"w_close", "w_high"}:
+        raise ValueError("不支援的價格欄位")
+
     engine = get_engine()
     minguo_year = int(year) - 1911
     
@@ -223,7 +229,7 @@ def fetch_timing_data(year, metric_col, limit, keyword, price_field="w_close"):
         SELECT stock_id, stock_name, report_month, {metric_col}, remark,
                LAG({metric_col}) OVER (PARTITION BY stock_id ORDER BY report_month) as prev_metric
         FROM monthly_revenue
-        WHERE report_month LIKE '{minguo_year}_%' OR report_month LIKE '{int(minguo_year)-1}_12'
+        WHERE report_month LIKE :year_prefix OR report_month = :previous_december
     ),
     spark_events AS (
         SELECT *,
@@ -232,10 +238,13 @@ def fetch_timing_data(year, metric_col, limit, keyword, price_field="w_close"):
                  ELSE (LEFT(report_month, 3)::int + 1911)::text || '-' || LPAD((RIGHT(report_month, 2)::int + 1)::text, 2, '0') || '-10'
                END::date as base_date
         FROM raw_events
-        WHERE {metric_col} >= {limit} 
-          AND (prev_metric < {limit} OR prev_metric IS NULL)
-          AND report_month LIKE '{minguo_year}_%'
-          AND (remark LIKE '%%{keyword}%%' OR stock_name LIKE '%%{keyword}%%')
+        WHERE {metric_col} >= :threshold
+          AND (prev_metric < :threshold OR prev_metric IS NULL)
+          AND report_month LIKE :year_prefix
+          AND (
+              STRPOS(LOWER(COALESCE(remark, '')), LOWER(:keyword)) > 0
+              OR STRPOS(LOWER(COALESCE(stock_name, '')), LOWER(:keyword)) > 0
+          )
     ),
     weekly_calc AS (
         SELECT symbol, date, {price_select},
@@ -257,8 +266,14 @@ def fetch_timing_data(year, metric_col, limit, keyword, price_field="w_close"):
     )
     SELECT * FROM final_detail WHERE pre_week IS NOT NULL ORDER BY pre_month DESC;
     """
+    params = {
+        "year_prefix": f"{minguo_year}_%",
+        "previous_december": f"{minguo_year - 1}_12",
+        "threshold": int(limit),
+        "keyword": str(keyword),
+    }
     with engine.connect() as conn:
-        return pd.read_sql_query(text(query), conn)
+        return pd.read_sql_query(text(query), conn, params=params)
 
 # ========== 5. 使用介面區 ==========
 with st.sidebar:
@@ -404,8 +419,20 @@ if not df.empty:
     df['財報資料'] = df['stock_id'].apply(lambda x: f"https://statementdog.com/analysis/{x}")
     
     # 顯示數據框
+    timing_percent_columns = {
+        column: "{:.1f}%"
+        for column in (
+            "growth_val",
+            "pre_month",
+            "pre_week",
+            "announce_week",
+            "after_week_1",
+            "after_month",
+        )
+        if column in df.columns
+    }
     st.dataframe(
-        df, 
+        streamlit_display_frame(df, timing_percent_columns),
         use_container_width=True, 
         height=400,
         column_config={
@@ -452,7 +479,7 @@ if not df.empty:
             with col_stat1:
                 st.write(f"**統計指標表 ({price_calc})**")
                 # 格式化顯示
-                formatted_df = display_df.style.format({
+                formatted_df = streamlit_display_frame(display_df, {
                     '均值%': '{:.1f}',
                     '中位數%': '{:.1f}',
                     '變異係數%': '{:.1f}',
@@ -536,7 +563,16 @@ if not df.empty:
                 
                 if not outliers.empty:
                     st.write(f"在 {outlier_col} 檢測到 {len(outliers)} 個異常值 ({price_calc}):")
-                    st.dataframe(outliers[['stock_id', 'stock_name', col_name, 'remark']], use_container_width=True)
+                    outlier_display = outliers[
+                        ['stock_id', 'stock_name', col_name, 'remark']
+                    ]
+                    st.dataframe(
+                        streamlit_display_frame(
+                            outlier_display, {col_name: "{:.1f}%"}
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
                 else:
                     st.info(f"在 {outlier_col} 未檢測到明顯異常值")
         
