@@ -1,6 +1,8 @@
 import unittest
 
-from snapshot_sync import _insert_rows
+from datetime import date
+
+from snapshot_sync import _insert_rows, _refresh_aggregate
 
 
 class FakeConn:
@@ -9,6 +11,30 @@ class FakeConn:
 
     def execute(self, statement, params=None):
         self.calls.append((str(statement), params))
+
+
+class FakeResult:
+    rowcount = 1
+
+
+class AggregateConn(FakeConn):
+    def execute(self, statement, params=None):
+        super().execute(statement, params)
+        return FakeResult()
+
+
+class WeeklyMondayRuleTests(unittest.TestCase):
+    def test_weekly_rows_are_dated_by_monday(self):
+        conn = AggregateConn()
+        relation = {"type": "table", "columns": {"date", "symbol", "w_open", "w_close", "w_high", "w_low"}}
+        _refresh_aggregate(
+            conn, table_name="stock_weekly_k", relation=relation, symbols=["2330.TW"], cutoff=date(2026, 10, 22)
+        )
+        insert_sql, params = conn.calls[-1]
+        self.assertIn('CAST(:start AS date) AS "date"', insert_sql)
+        self.assertNotIn("MAX(date::date)", insert_sql)
+        self.assertEqual(params["start"], date(2026, 10, 19))
+        self.assertEqual(params["start"].weekday(), 0)
 
 
 class BatchInsertTests(unittest.TestCase):

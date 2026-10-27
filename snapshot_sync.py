@@ -174,7 +174,8 @@ def _refresh_aggregate(
         delete_sql = "DELETE FROM stock_weekly_k WHERE date::date BETWEEN :start AND :end AND symbol=ANY(:symbols)"
         delete_params = {"start": start, "end": end, "symbols": symbols}
         expressions = {
-            "date": "MAX(date::date)",
+            # Rule 1: every weekly K row is dated by the Monday of its week.
+            "date": "CAST(:start AS date)",
             "symbol": "symbol",
             "w_open": "(array_agg(open ORDER BY date::date))[1]",
             "w_close": "(array_agg(close ORDER BY date::date DESC))[1]",
