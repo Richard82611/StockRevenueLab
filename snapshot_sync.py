@@ -68,12 +68,32 @@ def _ensure_run_table(conn) -> None:
     )
 
 
-def _insert_rows(conn, table_name: str, columns: list[str], rows: list[dict]) -> None:
+BATCH_SIZE = 500
+
+
+def _insert_rows(
+    conn, table_name: str, columns: list[str], rows: list[dict], *, batch_size: int = BATCH_SIZE
+) -> int:
+    """Insert rows with multi-row VALUES statements instead of one round trip per row.
+
+    Runs on the caller's connection, so it stays inside the caller's single transaction.
+    """
     if not rows:
-        return
+        return 0
     quoted = ",".join(f'"{column}"' for column in columns)
-    values = ",".join(f":{column}" for column in columns)
-    conn.execute(text(f'INSERT INTO "{table_name}" ({quoted}) VALUES ({values})'), rows)
+    for start in range(0, len(rows), batch_size):
+        chunk = rows[start : start + batch_size]
+        params: dict = {}
+        groups = []
+        for index, row in enumerate(chunk):
+            names = []
+            for position, column in enumerate(columns):
+                name = f"p{index}_{position}"
+                params[name] = row.get(column)
+                names.append(f":{name}")
+            groups.append("(" + ",".join(names) + ")")
+        conn.execute(text(f'INSERT INTO "{table_name}" ({quoted}) VALUES ' + ",".join(groups)), params)
+    return len(rows)
 
 
 def _upsert_prices(conn, payload: dict, columns: set[str]) -> int:
