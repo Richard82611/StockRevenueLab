@@ -62,6 +62,7 @@ jobs:
           git push origin HEAD:main
 
       - name: Apply snapshot to database (skips when DATABASE_URL is not set)
+        id: db_apply
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -73,10 +74,21 @@ jobs:
           python -m ci_apply_snapshot --snapshot data/latest_snapshot.json.gz
       - name: Write failure summary
         if: failure()
+        env:
+          DB_APPLY_OUTCOME: ${{ steps.db_apply.outcome }}
         run: |
-          {
-            echo "## Official data update failed"
-            echo
-            echo "No snapshot was published. Existing database cutoffs must remain visible as stale."
-            echo "Inspect the TWSE, TPEx, and MOPS request or coverage failure above."
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${DB_APPLY_OUTCOME}" = "failure" ]; then
+            {
+              echo "## Database write failed"
+              echo
+              echo "The snapshot was built and committed, but applying it to the database failed."
+              echo "Existing database cutoffs remain as before; inspect the Apply snapshot to database step above."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Official data update failed"
+              echo
+              echo "No snapshot was published. Existing database cutoffs must remain visible as stale."
+              echo "Inspect the TWSE, TPEx, and MOPS request or coverage failure above."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
