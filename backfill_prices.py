@@ -37,6 +37,21 @@ def fetch_range(start: date, end: date, *, pause: float = 2.5) -> dict[str, list
     return output
 
 
+def fetch_days(days, *, pause: float = 2.5) -> dict[str, list[dict]]:
+    """Fetch official prices for an explicit list of trading days; days without data are omitted."""
+    output: dict[str, list[dict]] = {}
+    for day in days:
+        try:
+            twse, _ = fetch_twse_prices(day)
+            time.sleep(pause)
+            tpex, _ = fetch_tpex_prices(day)
+            time.sleep(pause)
+        except SourceError:
+            continue
+        output[day.isoformat()] = twse + tpex
+    return output
+
+
 def apply_prices(engine, by_day: dict[str, list[dict]]) -> int:
     total = 0
     with engine.begin() as conn:

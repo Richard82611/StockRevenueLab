@@ -288,3 +288,21 @@ def fetch_latest_mops_revenue(
             continue
         return f"{year - 1911}_{month:02d}", rows, urls, quality
     raise SourceError("no complete MOPS month: " + ";".join(failures))
+
+
+FMTQIK_URL = "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK"
+
+
+def fetch_twse_trading_days(year: int, month: int) -> list[date]:
+    """Official TWSE trading days for one month (FMTQIK market summary rows)."""
+    response = _get(FMTQIK_URL, params={"date": f"{year}{month:02d}01", "response": "json"})
+    payload = response.json()
+    if payload.get("stat") != "OK":
+        if "沒有符合條件" in str(payload.get("stat", "")):
+            return []
+        raise SourceError("TWSE FMTQIK did not return the requested month")
+    days = []
+    for row in payload.get("data", []):
+        roc_year, month_text, day_text = str(row[0]).strip().split("/")
+        days.append(date(int(roc_year) + 1911, int(month_text), int(day_text)))
+    return sorted(days)

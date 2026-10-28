@@ -61,6 +61,16 @@ jobs:
           git commit -m "data: refresh official Taiwan market snapshot"
           git push origin HEAD:main
 
+      - name: Apply snapshot to database (skips when DATABASE_URL is not set)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "[db-apply] DATABASE_URL secret is not set; skipping direct database write."
+            exit 0
+          fi
+          python -m pip install "sqlalchemy==2.0.52" "psycopg2-binary==2.9.12"
+          python -m ci_apply_snapshot --snapshot data/latest_snapshot.json.gz
       - name: Write failure summary
         if: failure()
         run: |
