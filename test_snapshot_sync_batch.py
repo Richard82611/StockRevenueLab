@@ -66,6 +66,22 @@ class BatchInsertTests(unittest.TestCase):
         self.assertNotIn("-0.0", raw)
         self.assertEqual(json.loads(raw), [{"mom_pct": 0.0}])
 
+    def test_nonfinite_floats_are_json_strings(self):
+        conn = FakeConn()
+        _insert_rows(
+            conn,
+            "stock_prices",
+            ["close"],
+            [{"close": float("nan")}, {"close": float("inf")}, {"close": float("-inf")}, {"close": None}],
+        )
+        raw = conn.calls[0][1]["payload"]
+        self.assertNotIn("NaN", raw.replace('"NaN"', ""))
+        self.assertNotIn("Infinity", raw.replace('"Infinity"', "").replace('"-Infinity"', ""))
+        self.assertEqual(
+            json.loads(raw),
+            [{"close": "NaN"}, {"close": "Infinity"}, {"close": "-Infinity"}, {"close": None}],
+        )
+
     def test_empty_rows_do_nothing(self):
         conn = FakeConn()
         self.assertEqual(_insert_rows(conn, "t", ["a"], []), 0)
