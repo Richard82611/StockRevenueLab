@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -105,8 +106,14 @@ def _json_value(value: object):
 
     psycopg2 sends -0.0 as a numeric literal, and PostgreSQL stores that in float8
     as +0.0. json keeps the sign bit, so collapse negative zero before encoding.
+    NaN and infinities are JSON strings that float8 input accepts. Bare NaN /
+    Infinity tokens are not valid PostgreSQL json and would abort the batch.
     """
     if isinstance(value, float):
+        if math.isnan(value):
+            return "NaN"
+        if math.isinf(value):
+            return "Infinity" if value > 0 else "-Infinity"
         if value == 0.0:
             return 0.0
         return value
@@ -156,6 +163,7 @@ def _insert_rows(
         payload = json.dumps(
             [{column: _json_value(row.get(column)) for column in columns} for row in chunk],
             ensure_ascii=False,
+            allow_nan=False,
             default=_json_default,
         )
         conn.execute(text(statement), {"payload": payload})
