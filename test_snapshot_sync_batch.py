@@ -59,6 +59,13 @@ class BatchInsertTests(unittest.TestCase):
         self.assertEqual(last[0]["symbol"], "1000.TW")
         self.assertEqual(last[-1]["symbol"], "1200.TW")
 
+    def test_negative_zero_matches_numeric_literal_sign(self):
+        conn = FakeConn()
+        _insert_rows(conn, "monthly_revenue", ["mom_pct"], [{"mom_pct": -0.0}])
+        raw = conn.calls[0][1]["payload"]
+        self.assertNotIn("-0.0", raw)
+        self.assertEqual(json.loads(raw), [{"mom_pct": 0.0}])
+
     def test_empty_rows_do_nothing(self):
         conn = FakeConn()
         self.assertEqual(_insert_rows(conn, "t", ["a"], []), 0)

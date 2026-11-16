@@ -100,14 +100,30 @@ def _text_array_literal(values: list) -> str:
     return "{" + ",".join(parts) + "}"
 
 
-def _json_default(value: object):
+def _json_value(value: object):
+    """Normalize one cell before it is placed in the single json parameter.
+
+    psycopg2 sends -0.0 as a numeric literal, and PostgreSQL stores that in float8
+    as +0.0. json keeps the sign bit, so collapse negative zero before encoding.
+    """
+    if isinstance(value, float):
+        if value == 0.0:
+            return 0.0
+        return value
     if isinstance(value, datetime):
         return value.isoformat(sep=" ")
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
-    raise TypeError(f"unsupported value type: {type(value).__name__}")
+    return value
+
+
+def _json_default(value: object):
+    normalized = _json_value(value)
+    if normalized is value:
+        raise TypeError(f"unsupported value type: {type(value).__name__}")
+    return normalized
 
 
 def _execute(conn, statement: str, params: dict | None = None):
@@ -138,7 +154,7 @@ def _insert_rows(
     for start in range(0, len(rows), batch_size):
         chunk = rows[start : start + batch_size]
         payload = json.dumps(
-            [{column: row.get(column) for column in columns} for row in chunk],
+            [{column: _json_value(row.get(column)) for column in columns} for row in chunk],
             ensure_ascii=False,
             default=_json_default,
         )
