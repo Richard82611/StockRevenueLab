@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import text
@@ -69,30 +70,79 @@ def _ensure_run_table(conn) -> None:
 
 
 BATCH_SIZE = 500
+# One array parameter. A Python list passed to psycopg2 is inlined as
+# ARRAY['a','b',...], which pg_stat_statements stores as ARRAY[$1,$2,...]
+# and grows with the symbol count.
+_SYMBOL_ANY = "symbol = ANY(CAST(:symbols AS text[]))"
+
+
+def _text_array_literal(values: list) -> str:
+    """PostgreSQL text[] literal bound as one scalar, not one constant per element."""
+    parts: list[str] = []
+    for value in values:
+        if value is None:
+            parts.append("NULL")
+            continue
+        if isinstance(value, bool):
+            rendered = "true" if value else "false"
+        elif isinstance(value, datetime):
+            rendered = value.isoformat(sep=" ")
+        elif isinstance(value, date):
+            rendered = value.isoformat()
+        elif isinstance(value, float):
+            rendered = str(value)
+        elif isinstance(value, int):
+            rendered = str(value)
+        else:
+            rendered = str(value)
+        escaped = rendered.replace("\\", "\\\\").replace('"', '\\"')
+        parts.append('"' + escaped + '"')
+    return "{" + ",".join(parts) + "}"
+
+
+def _json_default(value: object):
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    raise TypeError(f"unsupported value type: {type(value).__name__}")
+
+
+def _execute(conn, statement: str, params: dict | None = None):
+    """Run SQL, binding :symbols as one text[] literal when it is a sequence."""
+    bound = dict(params or {})
+    symbols = bound.get("symbols")
+    if ":symbols" in statement and isinstance(symbols, (list, tuple)):
+        bound["symbols"] = _text_array_literal(list(symbols))
+    return conn.execute(text(statement), bound)
 
 
 def _insert_rows(
     conn, table_name: str, columns: list[str], rows: list[dict], *, batch_size: int = BATCH_SIZE
 ) -> int:
-    """Insert rows with multi-row VALUES statements instead of one round trip per row.
+    """Insert rows with one fixed SQL statement per batch.
 
-    Runs on the caller's connection, so it stays inside the caller's single transaction.
+    json_populate_recordset takes a single json parameter, so the statement text
+    does not grow with the row count. Runs on the caller's connection and stays
+    inside the caller's transaction. Column types come from the destination table.
     """
     if not rows:
         return 0
     quoted = ",".join(f'"{column}"' for column in columns)
+    statement = (
+        f'INSERT INTO "{table_name}" ({quoted}) '
+        f'SELECT {quoted} FROM json_populate_recordset(NULL::"{table_name}", CAST(:payload AS json))'
+    )
     for start in range(0, len(rows), batch_size):
         chunk = rows[start : start + batch_size]
-        params: dict = {}
-        groups = []
-        for index, row in enumerate(chunk):
-            names = []
-            for position, column in enumerate(columns):
-                name = f"p{index}_{position}"
-                params[name] = row.get(column)
-                names.append(f":{name}")
-            groups.append("(" + ",".join(names) + ")")
-        conn.execute(text(f'INSERT INTO "{table_name}" ({quoted}) VALUES ' + ",".join(groups)), params)
+        payload = json.dumps(
+            [{column: row.get(column) for column in columns} for row in chunk],
+            ensure_ascii=False,
+            default=_json_default,
+        )
+        conn.execute(text(statement), {"payload": payload})
     return len(rows)
 
 
@@ -109,8 +159,9 @@ def _upsert_prices(conn, payload: dict, columns: set[str]) -> int:
         for row in payload["prices"]
     ]
     symbols = [row["symbol"] for row in rows]
-    conn.execute(
-        text("DELETE FROM stock_prices WHERE date::date=:price_date AND symbol=ANY(:symbols)"),
+    _execute(
+        conn,
+        f"DELETE FROM stock_prices WHERE date::date=:price_date AND {_SYMBOL_ANY}",
         {"price_date": price_date, "symbols": symbols},
     )
     _insert_rows(conn, "stock_prices", sorted(REQUIRED_PRICE_COLUMNS), rows)
@@ -171,7 +222,7 @@ def _refresh_aggregate(
             return 0
         start = cutoff - timedelta(days=cutoff.weekday())
         end = start + timedelta(days=6)
-        delete_sql = "DELETE FROM stock_weekly_k WHERE date::date BETWEEN :start AND :end AND symbol=ANY(:symbols)"
+        delete_sql = f"DELETE FROM stock_weekly_k WHERE date::date BETWEEN :start AND :end AND {_SYMBOL_ANY}"
         delete_params = {"start": start, "end": end, "symbols": symbols}
         expressions = {
             # Rule 1: every weekly K row is dated by the Monday of its week.
@@ -183,7 +234,7 @@ def _refresh_aggregate(
             "w_low": "MIN(low)",
             "w_volume": "SUM(volume)",
         }
-        where_sql = "date::date BETWEEN :start AND :end AND symbol=ANY(:symbols)"
+        where_sql = f"date::date BETWEEN :start AND :end AND {_SYMBOL_ANY}"
         query_params = delete_params
     elif table_name == "stock_monthly_k":
         required = {"report_month", "symbol", "m_close"}
@@ -191,7 +242,7 @@ def _refresh_aggregate(
             return 0
         roc_month = f"{cutoff.year - 1911}_{cutoff.month:02d}"
         key_value = roc_month
-        delete_sql = "DELETE FROM stock_monthly_k WHERE report_month=:key_value AND symbol=ANY(:symbols)"
+        delete_sql = f"DELETE FROM stock_monthly_k WHERE report_month=:key_value AND {_SYMBOL_ANY}"
         delete_params = {"key_value": key_value, "symbols": symbols}
         expressions = {
             "report_month": ":key_value",
@@ -202,14 +253,17 @@ def _refresh_aggregate(
             "m_low": "MIN(low)",
             "m_volume": "SUM(volume)",
         }
-        where_sql = "EXTRACT(YEAR FROM date::date)=:year AND EXTRACT(MONTH FROM date::date)=:month AND symbol=ANY(:symbols)"
+        where_sql = (
+            "EXTRACT(YEAR FROM date::date)=:year AND EXTRACT(MONTH FROM date::date)=:month "
+            f"AND {_SYMBOL_ANY}"
+        )
         query_params = {"key_value": key_value, "year": cutoff.year, "month": cutoff.month, "symbols": symbols}
     elif table_name == "stock_annual_k":
         required = {"year", "symbol", "year_close"}
         if not required <= columns:
             return 0
         key_value = str(cutoff.year)
-        delete_sql = "DELETE FROM stock_annual_k WHERE year::text=:key_value AND symbol=ANY(:symbols)"
+        delete_sql = f"DELETE FROM stock_annual_k WHERE year::text=:key_value AND {_SYMBOL_ANY}"
         delete_params = {"key_value": key_value, "symbols": symbols}
         expressions = {
             "year": ":key_value",
@@ -222,7 +276,7 @@ def _refresh_aggregate(
             "year_low": "MIN(low)",
             "year_volume": "SUM(volume)",
         }
-        where_sql = "EXTRACT(YEAR FROM date::date)=:year AND symbol=ANY(:symbols)"
+        where_sql = f"EXTRACT(YEAR FROM date::date)=:year AND {_SYMBOL_ANY}"
         query_params = {"key_value": key_value, "year": cutoff.year, "symbols": symbols}
     else:
         return 0
@@ -230,14 +284,13 @@ def _refresh_aggregate(
     insert_columns = [column for column in expressions if column in columns]
     if not required <= set(insert_columns):
         return 0
-    conn.execute(text(delete_sql), delete_params)
+    _execute(conn, delete_sql, delete_params)
     quoted = ",".join(f'"{column}"' for column in insert_columns)
     selected = ",".join(f'{expressions[column]} AS "{column}"' for column in insert_columns)
-    result = conn.execute(
-        text(
-            f'INSERT INTO "{table_name}" ({quoted}) '
-            f'SELECT {selected} FROM stock_prices WHERE {where_sql} GROUP BY symbol'
-        ),
+    result = _execute(
+        conn,
+        f'INSERT INTO "{table_name}" ({quoted}) '
+        f'SELECT {selected} FROM stock_prices WHERE {where_sql} GROUP BY symbol',
         query_params,
     )
     return result.rowcount if result.rowcount and result.rowcount > 0 else 0

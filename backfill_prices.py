@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from sqlalchemy import text
 
 from pipeline.sources import SourceError, fetch_tpex_prices, fetch_twse_prices
-from snapshot_sync import LOCK_NAME, REQUIRED_PRICE_COLUMNS, _insert_rows
+from snapshot_sync import LOCK_NAME, REQUIRED_PRICE_COLUMNS, _SYMBOL_ANY, _execute, _insert_rows
 
 PRICE_COLUMNS = sorted(REQUIRED_PRICE_COLUMNS)
 
@@ -61,8 +61,9 @@ def apply_prices(engine, by_day: dict[str, list[dict]]) -> int:
             symbols = [row["symbol"] for row in rows]
             if len(symbols) != len(set(symbols)):
                 raise ValueError(f"duplicate symbols on {day}")
-            conn.execute(
-                text("DELETE FROM stock_prices WHERE date::date=:day AND symbol=ANY(:symbols)"),
+            _execute(
+                conn,
+                f"DELETE FROM stock_prices WHERE date::date=:day AND {_SYMBOL_ANY}",
                 {"day": date.fromisoformat(day), "symbols": symbols},
             )
             total += _insert_rows(conn, "stock_prices", PRICE_COLUMNS, rows)
